@@ -7,6 +7,52 @@
 #include <JavaScriptCore/JSStringRef.h>
 #include <JavaScriptCore/JSContextRef.h>
 
+#ifdef __APPLE__
+bool iosVersionChecked = false;
+int32_t TagTypeNumber = 0;
+int64_t DoubleEncodeOffset = 0;
+#else
+#define TagTypeNumber 0xffff0000
+#define DoubleEncodeOffset (1ll << 48)
+#endif
+#define ValueTrue 0x7
+
+double EXJSValueToNumberFast(JSContextRef ctx, JSValueRef v)
+{
+#if __LP64__ // arm64 version
+  union {
+    int64_t asInt64;
+    double asDouble;
+    struct { int32_t asInt; int32_t tag; } asBits;
+  } taggedValue = { .asInt64 = (int64_t)v };
+
+#ifdef __APPLE__
+  if (!iosVersionChecked) {
+    bool newJsc = EXiOSGetOperatingSystemVersion().majorVersion >= 14
+    TagTypeNumber = newJsc ? 0xfffe0000 : 0xffff0000;
+    DoubleEncodeOffset = newJsc ? 1ll << 49 : 1ll << 48;
+    iosVersionChecked = true
+  }
+#endif
+
+  if( (taggedValue.asBits.tag & TagTypeNumber) == TagTypeNumber ) {
+    return taggedValue.asBits.asInt;
+  }
+  else if( taggedValue.asBits.tag & TagTypeNumber ) {
+    taggedValue.asInt64 -= DoubleEncodeOffset;
+    return taggedValue.asDouble;
+  }
+  else if( taggedValue.asBits.asInt == ValueTrue ) {
+    return 1.0;
+  }
+  else {
+    return 0; // false, undefined, null, object
+  }
+#else // armv7 version
+  return JSValueToNumber(ctx, v, NULL);
+#endif
+}
+
 void EXJSConsoleLog(JSContextRef ctx, const char *msg) {
   JSObjectRef global = JSContextGetGlobalObject(ctx);
   JSObjectRef console = (JSObjectRef) EXJSObjectGetPropertyNamed(ctx, global, "console");
